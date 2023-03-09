@@ -15,38 +15,37 @@ os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = 'true'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string('ckpt_name', 'facebook/bart-base', 'Checkpoint name')
-flags.DEFINE_integer('batch_size', 16, 'Batch size')
-flags.DEFINE_integer('n_epochs', None, 'Number of epochs')
-flags.DEFINE_integer('n_steps', None, 'Number of steps')
+flags.DEFINE_string('ckpt', 'facebook/bart-base', 'Checkpoint name')
 flags.DEFINE_float('lr', 5e-5, 'Learning rate')
+flags.DEFINE_integer('batch_size', 16, 'Batch size')
+flags.DEFINE_integer('n_steps', None, 'Number of steps')
+flags.DEFINE_integer('grad_acc', 1, 'Number of gradient accumulation steps')
+flags.DEFINE_integer('n_epochs', None, 'Number of epochs')
 
 
 def main(argv):
-    tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt_name)
-    model = BartForConditionalGeneration.from_pretrained(FLAGS.ckpt_name).to('cuda')
+    tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt)
+    model = BartForConditionalGeneration.from_pretrained(FLAGS.ckpt).to('cuda')
     build_dataloader = build_dataloader_fn(model, tokenizer)
     train_dl = build_dataloader(data_split='train')
 
     optimizer = AdamW(model.parameters(), lr=FLAGS.lr)
-    n_train_steps = FLAGS.n_steps or (FLAGS.n_epochs * len(train_dl))
     model.train()
 
-    with tqdm(total=n_train_steps) as pbar:
-        for step, batch in enum_steps(train_dl, n_train_steps):
+    with tqdm(total=FLAGS.n_steps) as pbar:
+        for step, batch in enum_steps(train_dl, FLAGS.n_steps*FLAGS.grad_acc):
             outputs = model(**batch)
             loss = outputs.loss
             loss.backward()
+            if (step + 1) % FLAGS.grad_acc == 0:
+                optimizer.step()
+                optimizer.zero_grad()
+                pbar.set_description(f'Loss: {loss:.4f}')
+                pbar.update(1)
 
-            optimizer.step()
-            optimizer.zero_grad()
-
-            pbar.set_description(f'Loss: {loss:.4f}')
-            pbar.update(1)
-
-    save_ckpt_name = f'bart-lr{FLAGS.lr:.2e}-step{n_train_steps}'
-    tokenizer.save_pretrained(save_ckpt_name, from_pt=True)
-    model.save_pretrained(save_ckpt_name, from_pt=True)
+    save_ckpt = f'bart-large-cnn-lr{FLAGS.lr:.2e}-step{FLAGS.n_steps}'
+    tokenizer.save_pretrained(save_ckpt, from_pt=True)
+    model.save_pretrained(save_ckpt, from_pt=True)
 
 
 def enum_steps(dl, n_steps):
