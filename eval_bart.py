@@ -23,8 +23,8 @@ def evaluate(model, tokenizer, dataloader):
 
 
 def main(argv):
-    tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt_name)
-    model = BartForConditionalGeneration.from_pretrained(FLAGS.ckpt_name).to('cuda')
+    tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt)
+    model = BartForConditionalGeneration.from_pretrained(FLAGS.ckpt).to('cuda')
     build_dataloader = build_dataloader_fn(model, tokenizer)
 
     for emo in EMO_LIST:
@@ -41,6 +41,6 @@ if __name__ == '__main__':
 
     FLAGS = flags.FLAGS
     flags.DEFINE_integer('batch_size', 16, 'Batch size')
-    flags.DEFINE_string('ckpt_name', 'facebook/bart-base', 'Checkpoint name')
+    flags.DEFINE_string('ckpt', 'facebook/bart-base', 'Checkpoint name')
 
     app.run(main)
