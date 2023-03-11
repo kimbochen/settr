@@ -43,7 +43,7 @@ def main(argv):
                 pbar.set_description(f'Loss: {loss:.4f}')
                 pbar.update(1)
 
-    save_ckpt = f'bart-large-cnn-lr{FLAGS.lr:.2e}-step{FLAGS.n_steps}'
+    save_ckpt = f'runs/bart-large-cnn-lr{FLAGS.lr:.2e}-step{FLAGS.n_steps}'
     tokenizer.save_pretrained(save_ckpt, from_pt=True)
     model.save_pretrained(save_ckpt, from_pt=True)
 
