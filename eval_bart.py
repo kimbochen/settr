@@ -40,7 +40,7 @@ if __name__ == '__main__':
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
     FLAGS = flags.FLAGS
-    flags.DEFINE_integer('batch_size', 16, 'Batch size')
+    flags.DEFINE_integer('batch_size', 32, 'Batch size')
     flags.DEFINE_string('ckpt', 'facebook/bart-base', 'Checkpoint name')
 
     app.run(main)
