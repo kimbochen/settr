@@ -19,7 +19,10 @@ def evaluate(model, tokenizer, dataloader):
         refs = tokenizer.batch_decode(batch['labels'], skip_special_tokens=True)
         metric.add_batch(predictions=preds, references=refs)
 
-    print(metric.compute())
+    results = metric.compute()
+    print(results)
+
+    return results
 
 
 def main(argv):
