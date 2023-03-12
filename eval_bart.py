@@ -31,7 +31,7 @@ def main(argv):
     build_dataloader = build_dataloader_fn(model, tokenizer)
 
     for emo in EMO_LIST:
-        val_dl = build_dataloader(data_split='val', is_tgt_emo=lambda e: e == emo)
+        val_dl = build_dataloader(data_split=FLAGS.split, is_tgt_emo=lambda e: e == emo)
         print(f'Evaluating on emotion {emo}')
         evaluate(model, tokenizer, val_dl)
 
@@ -45,5 +45,6 @@ if __name__ == '__main__':
     FLAGS = flags.FLAGS
     flags.DEFINE_integer('batch_size', 32, 'Batch size')
     flags.DEFINE_string('ckpt', 'facebook/bart-base', 'Checkpoint name')
+    flags.DEFINE_string('split', 'val', 'Data split')
 
     app.run(main)
