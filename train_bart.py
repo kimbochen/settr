@@ -19,6 +19,7 @@ os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string('ckpt', 'facebook/bart-base', 'Checkpoint name')
+flags.DEFINE_string('save_dir', None, 'Checkpoint name')
 flags.DEFINE_float('lr', 5e-5, 'Learning rate')
 flags.DEFINE_integer('batch_size', 16, 'Batch size')
 flags.DEFINE_integer('grad_acc', 1, 'Number of gradient accumulation steps')
@@ -26,6 +27,7 @@ flags.DEFINE_integer('n_steps', None, 'Number of steps')
 flags.DEFINE_integer('n_epochs', None, 'Number of epochs')
 
 flags.mark_flag_as_required('n_epochs')
+flags.mark_flag_as_required('save_dir')
 
 
 def main(argv):
@@ -40,7 +42,7 @@ def main(argv):
     n_train_steps = FLAGS.n_steps or (FLAGS.n_epochs * len(train_dl) // FLAGS.grad_acc)
     eval_freq = len(train_dl)
 
-    writer = SummaryWriter(f'runs/bart-base-lr{FLAGS.lr:.2e}-{FLAGS.n_epochs}epochs')
+    writer = SummaryWriter(FLAGS.save_dir)
     model.train()
 
     with tqdm(total=n_train_steps) as pbar:
