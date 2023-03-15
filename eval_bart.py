@@ -1,3 +1,4 @@
+import torch
 import evaluate as ev
 from absl import app, flags
 from transformers import AutoTokenizer, BartForConditionalGeneration
@@ -6,23 +7,28 @@ from tqdm.auto import tqdm
 from data_preprocess import build_dataset, build_dataloader_fn, EMO_LIST
 
 
-def evaluate(model, tokenizer, dataloader):
-    metric = ev.load('rouge')
+@torch.inference_mode()
+def evaluate(model, tokenizer, dataloader, n_steps=5):
+    rouge = ev.load('rouge')
+    losses = []
     model.eval()
 
-    for batch in tqdm(dataloader):
-        summary_ids = model.generate(
-            batch['input_ids'].to('cuda'),
-            length_penalty=0.8, num_beams=8, max_length=128
-        )
+    for _, batch in tqdm(zip(range(n_steps), dataloader), total=n_steps):
+        batch = {k : v.to('cuda') for k, v in batch.items()}
+
+        loss, *_ = model(**batch, return_dict=False)
+        losses.append(loss.detach().to('cpu'))
+
+        summary_ids = model.generate(batch['input_ids'], length_penalty=0.8, num_beams=8, max_length=128)
         preds = tokenizer.batch_decode(summary_ids, skip_special_tokens=True)
         refs = tokenizer.batch_decode(batch['labels'], skip_special_tokens=True)
-        metric.add_batch(predictions=preds, references=refs)
+        rouge.add_batch(predictions=preds, references=refs)
 
-    results = metric.compute()
-    print(results)
+    metrics = rouge.compute()
+    avg_loss = torch.mean(torch.stack(losses)).item()
+    print(f'{avg_loss=:3f}, {metrics=}')
 
-    return results
+    return avg_loss, metrics
 
 
 def main(argv):
