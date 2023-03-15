@@ -2,6 +2,7 @@ from absl import app, flags
 from tensorboardX import SummaryWriter
 from torch.optim import AdamW
 from transformers import AutoTokenizer, BartForConditionalGeneration
+from transformers import get_constant_schedule_with_warmup
 from tqdm.auto import tqdm
 
 from data_preprocess import EMO_LIST, build_dataloader_fn
@@ -12,6 +13,7 @@ def main(argv):
     tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt)
     model = BartForConditionalGeneration.from_pretrained(FLAGS.ckpt).to('cuda')
     optimizer = AdamW(model.parameters(), lr=FLAGS.lr)
+    scheduler = get_constant_schedule_with_warmup(optimizer, FLAGS.warmup)
 
     build_dataloader = build_dataloader_fn(model, tokenizer)
     train_dl = build_dataloader(data_split='train')
@@ -31,8 +33,11 @@ def main(argv):
 
         optimizer.step()
         optimizer.zero_grad()
+        scheduler.step()
 
         if (step + 1) % FLAGS.eval_freq == 0:
+            writer.add_scalar('learning_rate', scheduler.get_last_lr()[0], step)
+
             train_loss, train_metrics = evaluate(model, tokenizer, train_emo_dl)
             writer.add_scalar('train/loss', train_loss, step)
             log_metrics('train', train_metrics, step)
@@ -70,11 +75,13 @@ if __name__ == '__main__':
     flags.DEFINE_string('ckpt', 'facebook/bart-base', 'Checkpoint name')
     flags.DEFINE_string('save_dir', None, 'Checkpoint name')
     flags.DEFINE_float('lr', 5e-5, 'Learning rate')
+    flags.DEFINE_integer('warmup', None, 'Number of steps')
     flags.DEFINE_integer('batch_size', 16, 'Batch size')
     flags.DEFINE_integer('n_steps', None, 'Number of steps')
     flags.DEFINE_integer('eval_freq', None, 'Number of steps per evaluation')
     flags.DEFINE_string('emo', 'anger', 'Target emotion')
 
+    flags.mark_flag_as_required('warmup')
     flags.mark_flag_as_required('n_steps')
     flags.mark_flag_as_required('eval_freq')
     flags.mark_flag_as_required('save_dir')
