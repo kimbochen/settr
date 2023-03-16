@@ -7,39 +7,39 @@ from tqdm.auto import tqdm
 from data_preprocess import build_dataset, build_dataloader_fn, EMO_LIST
 
 
-@torch.inference_mode()
-def evaluate(model, tokenizer, dataloader, n_steps=5):
-    rouge = ev.load('rouge')
-    losses = []
-    model.eval()
-
-    for _, batch in tqdm(zip(range(n_steps), dataloader), total=n_steps):
-        batch = {k : v.to('cuda') for k, v in batch.items()}
-
-        loss, *_ = model(**batch, return_dict=False)
-        losses.append(loss.detach().to('cpu'))
-
-        summary_ids = model.generate(batch['input_ids'], length_penalty=0.8, num_beams=8, max_length=128)
-        preds = tokenizer.batch_decode(summary_ids, skip_special_tokens=True)
-        refs = tokenizer.batch_decode(batch['labels'], skip_special_tokens=True)
-        rouge.add_batch(predictions=preds, references=refs)
-
-    metrics = rouge.compute()
-    avg_loss = torch.mean(torch.stack(losses)).item()
-    print(f'{avg_loss=:3f}, {metrics=}')
-
-    return avg_loss, metrics
-
-
 def main(argv):
     tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt)
     model = BartForConditionalGeneration.from_pretrained(FLAGS.ckpt).to('cuda')
-    build_dataloader = build_dataloader_fn(model, tokenizer)
+
+    def build_emo_dl_fn():
+        build_dataloader = build_dataloader_fn(model, tokenizer)
+        def build_emo_dl(emo):
+            filter_fn = lambda e: e == emo
+            dl = build_dataloader(data_split=FLAGS.split, is_tgt_emo=filter_fn)
+            return dl
+        return build_emo_dl
+
+    @torch.inference_mode()
+    def evaluate(dataloader):
+        rouge = ev.load('rouge')
+        model.eval()
+
+        for batch in tqdm(dataloader):
+            batch = {k : v.to('cuda') for k, v in batch.items()}
+            summary_ids = model.generate(batch['input_ids'], length_penalty=0.8, num_beams=8, max_length=128)
+            preds = tokenizer.batch_decode(summary_ids, skip_special_tokens=True)
+            refs = tokenizer.batch_decode(batch['labels'], skip_special_tokens=True)
+            rouge.add_batch(predictions=preds, references=refs)
+
+        metrics = rouge.compute()
+        print(f'{metrics=}')
+
+    build_emo_dl = build_emo_dl_fn()
 
     for emo in EMO_LIST:
-        val_dl = build_dataloader(data_split=FLAGS.split, is_tgt_emo=lambda e: e == emo)
         print(f'Evaluating on emotion {emo}')
-        evaluate(model, tokenizer, val_dl)
+        emo_dl = build_emo_dl(emo)
+        evaluate(emo_dl)
 
 
 if __name__ == '__main__':
