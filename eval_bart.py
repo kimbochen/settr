@@ -23,14 +23,12 @@ def main(argv):
     def evaluate(dataloader):
         rouge = ev.load('rouge')
         model.eval()
-
         for batch in tqdm(dataloader):
             batch = {k : v.to('cuda') for k, v in batch.items()}
             summary_ids = model.generate(batch['input_ids'], length_penalty=0.8, num_beams=8, max_length=128)
             preds = tokenizer.batch_decode(summary_ids, skip_special_tokens=True)
             refs = tokenizer.batch_decode(batch['labels'], skip_special_tokens=True)
             rouge.add_batch(predictions=preds, references=refs)
-
         metrics = rouge.compute()
         print(f'{metrics=}')
 

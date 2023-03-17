@@ -17,4 +17,6 @@ set -o xtrace
 
 # python train_bart.py --ckpt="facebook/bart-base" --batch_size=16 --grad_acc=2 --lr="2e-5" --warmup=200 --n_steps=800 --eval_freq=40 --save_dir="runs/bart-base-first-run"
 # python train_bart.py --ckpt="runs/bart-base-first-run" --batch_size=16 --grad_acc=2 --lr="2e-5" --n_steps=800 --eval_freq=40 --save_dir="runs/bart-base-overfit"
-python train_bart.py --ckpt="facebook/bart-base" --batch_size=16 --grad_acc=2 --lr="2e-5" --warmup=400 --n_steps=800 --eval_freq=40 --save_dir="runs/bart-base-more-warmup"
+# python train_bart.py --ckpt="facebook/bart-base" --batch_size=16 --grad_acc=2 --lr="2e-5" --warmup=400 --n_steps=800 --eval_freq=40 --save_dir="runs/bart-base-more-warmup"
+
+# python train_bart.py --ckpt="t5-base" --batch_size=8 --grad_acc=4 --lr="2e-5" --warmup=400 --n_steps=1200 --eval_freq=60 --save_dir="runs/t5-base-train-longer"

@@ -43,15 +43,17 @@ def main(argv):
 
         if (step + 1) % (FLAGS.eval_freq * FLAGS.grad_acc) == 0:
             opt_step = (step + 1) // FLAGS.grad_acc
+
             writer.add_scalar('learning_rate', scheduler.get_last_lr()[0], opt_step)
             model.eval()
             evaluate('train', eval_train_dl, opt_step)
             metric = evaluate('val', eval_val_dl, opt_step)
+            model.train()
+
             if metric > best_metric:
                 print(f'Saving best model with validation rougeL {metric:.3f}...')
                 model.save_pretrained(writer.logdir, from_pt=True)
                 best_metric = metric
-            model.train()
 
     pbar.close()
     tokenizer.save_pretrained(writer.logdir, from_pt=True)
@@ -113,7 +115,7 @@ if __name__ == '__main__':
     flags.DEFINE_integer('n_steps', None, 'Number of steps')
     flags.DEFINE_integer('eval_freq', None, 'Number of steps per evaluation')
 
-    flags.DEFINE_string('emo', 'anger', 'Target emotion')
+    flags.DEFINE_string('emo', 'anger', 'Emotion of evaluation datasets')
 
     flags.mark_flag_as_required('warmup')
     flags.mark_flag_as_required('n_steps')
