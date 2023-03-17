@@ -7,13 +7,13 @@
 
 ```bash
 # Open a bash shell
-salloc -p <partition> --gres=gpu:1 --mem=12g -t=3:00:00
+salloc -p <partition> --gres gpu:1 --mem 12g -t 3:00:00
 
 # Run an interactive job
-srun -p <partition> --gres=gpu:1 --mem=12g -t=3:00:00
+srun -p <partition> --gres gpu:1 --mem 12g -t 3:00:00
 
 # Run another job within the same node
-srun --jobid=<job_id>
+srun --jobid <job_id>
 
 # Check job status and up time
 squeue -u $USER
