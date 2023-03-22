@@ -5,7 +5,7 @@ import evaluate as ev
 from absl import app, flags
 from tensorboardX import SummaryWriter
 from torch.optim import AdamW
-from transformers import AutoTokenizer, BartForConditionalGeneration
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from transformers import get_constant_schedule, get_constant_schedule_with_warmup
 from tqdm.auto import tqdm
 
@@ -14,7 +14,7 @@ from data_preprocess import build_dataloader_fn
 
 def main(argv):
     tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt)
-    model = BartForConditionalGeneration.from_pretrained(FLAGS.ckpt).to('cuda')
+    model = AutoModelForSeq2SeqLM.from_pretrained(FLAGS.ckpt).to('cuda')
     optimizer = AdamW(model.parameters(), lr=FLAGS.lr)
     scheduler = get_constant_schedule_with_warmup(optimizer, FLAGS.warmup)  # get_constant_schedule(optimizer)
     writer = SummaryWriter(FLAGS.save_dir)

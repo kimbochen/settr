@@ -1,7 +1,7 @@
 import torch
 import evaluate as ev
 from absl import app, flags
-from transformers import AutoTokenizer, BartForConditionalGeneration
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from tqdm.auto import tqdm
 
 from data_preprocess import build_dataset, build_dataloader_fn, EMO_LIST
@@ -9,7 +9,7 @@ from data_preprocess import build_dataset, build_dataloader_fn, EMO_LIST
 
 def main(argv):
     tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt)
-    model = BartForConditionalGeneration.from_pretrained(FLAGS.ckpt).to('cuda')
+    model = AutoModelForSeq2SeqLM.from_pretrained(FLAGS.ckpt).to('cuda')
 
     def build_emo_dl_fn():
         build_dataloader = build_dataloader_fn(model, tokenizer)
