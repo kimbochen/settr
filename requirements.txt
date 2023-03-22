@@ -7,4 +7,5 @@ evaluate
 
 absl-py
 rouge-score
-bertviz
+tensorboard
+tensorboardX
