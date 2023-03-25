@@ -13,7 +13,7 @@ from data_preprocess import build_dataloader_fn
 
 
 def main(argv):
-    tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt)
+    tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt)  # Add model_max_length=512 for T5
     model = AutoModelForSeq2SeqLM.from_pretrained(FLAGS.ckpt).to('cuda')
     optimizer = AdamW(model.parameters(), lr=FLAGS.lr)
     scheduler = get_constant_schedule_with_warmup(optimizer, FLAGS.warmup)  # get_constant_schedule(optimizer)
