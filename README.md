@@ -1,6 +1,27 @@
 # Summarizing Emotion Triggers with TRansformers
 
 
+## Install Packages
+
+```bash
+pip install -r requirements.txt
+```
+
+## Data Setup
+
+Put the data in the folder `data` in the `settr` directory. 
+Data is not released and will be provided upon request.
+
+## Training
+
+See `launch_train.sh` for examples.
+
+## Evaluation
+
+```bash
+./launch_eval.sh <Experiment Name>
+```
+
 ## Useful Commands
 
 ### Connect to a Slurm Cluster Node
