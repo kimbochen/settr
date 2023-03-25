@@ -20,7 +20,7 @@ def main(argv):
         return build_emo_dl
 
     @torch.inference_mode()
-    def evaluate(dataloader):
+    def evaluate(dataloader, emo_name):
         rouge = ev.load('rouge')
         model.eval()
         for batch in tqdm(dataloader):
@@ -30,14 +30,14 @@ def main(argv):
             refs = tokenizer.batch_decode(batch['labels'], skip_special_tokens=True)
             rouge.add_batch(predictions=preds, references=refs)
         metrics = rouge.compute()
-        print(f'{metrics=}')
+        print(f'{emo_name}: rougeL={metrics["rougeL"]:.3f}\n\n')
 
     build_emo_dl = build_emo_dl_fn()
 
     for emo in EMO_LIST:
         print(f'Evaluating on emotion {emo}')
         emo_dl = build_emo_dl(emo)
-        evaluate(emo_dl)
+        evaluate(emo_dl, emo)
 
 
 if __name__ == '__main__':
