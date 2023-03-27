@@ -1,138 +1,219 @@
-import json 
+# get_raw_dataset
+import json
 from collections import defaultdict
 from itertools import chain
 from pathlib import Path
 
-from absl import flags
+# data_dict_balanced
+from collections import Counter, defaultdict
+
+# config_dataset
 from datasets import Dataset
+
+# config_dataloader
+from os import sched_getaffinity
+import torch
+from absl import flags
 from torch.utils.data import DataLoader
 from transformers import DataCollatorForSeq2Seq
 
+# set_deterministic
+import random
+import torch
+import numpy as np
 
+# data_dict_balanced
 EMO_LIST = ['anger', 'disgust', 'fear', 'joy', 'sadness', 'trust', 'anticipation']
-DATA_DIR = Path('data/train_val_test-WITH_POSTS')
-FLAGS = flags.FLAGS
+FLAGS = flags.FLAGS  # config_dataloader
 
 
-def set_deterministic(seed=3985):
-    import torch
-    torch.use_deterministic_algorithms(True)
-    g = torch.Generator()
-    g.manual_seed(seed)
+def get_raw_dataset(split, concat_same_emo=True):
+    '''
+    Raw dataset format:
+    raw_dataset: [sample]
+    sample     : { 'post': str, 'annos': [anno] }
+    anno       : { 'emo': str, 'summ': str }
+    '''
+    data_dir = Path('data/train_val_test-WITH_POSTS')
+    assert data_dir.exists(), 'Data not in the correct file path.'
 
-    import torch.backends.cudnn as cudnn
-    cudnn.deterministic = True
-    cudnn.benchmark = False
+    data_path = data_dir / f'{split}_anonymized-WITH_POSTS.json'
+    assert data_path.exists(), f'Cannot find {split} data split at {data_path}.'
 
-    import random
-    random.seed(seed)
+    with data_path.open() as f:
+        json_data = json.load(f)
 
-    import numpy as np
-    np.random.seed(seed)
+    raw_dataset = []
 
-    def seed_worker(worker_id):
-        worker_seed = torch.initial_seed() % 2**32
-        np.random.seed(worker_seed)
-        random.seed(worker_seed)
+    if concat_same_emo:
+        for raw_sample in json_data.values():
+            emo2summ = defaultdict(str)
+            for anno in chain(*raw_sample['Annotations'].values()):
+                if anno['Emotion'] != 'NA':
+                    emo2summ[anno['Emotion']] += ' ' + anno['Abstractive']
 
-    return g, seed_worker
-
-
-def build_data_dict(data_split, is_tgt_emo=lambda _: True):
-    data_path = DATA_DIR / f'{data_split}_anonymized-WITH_POSTS.json'
-    assert data_path.exists()
-
-    with open(data_path) as f:
-        data = json.load(f)
-
-    data_dict = {'input': [], 'summary': []}
-    input_str = 'Generate a summary of what triggered {} in this post: {}'
-
-    for sample in data.values():
-        emo_summ = defaultdict(str)
-
-        for anno in chain(*sample['Annotations'].values()):
-            if is_tgt_emo(anno['Emotion']) and anno['Emotion'] != 'NA':
-                emo_summ[anno['Emotion']] += anno['Abstractive']
-
-        for emo, summ in emo_summ.items():
-            data_dict['input'].append(input_str.format(emo, sample['Reddit Post']))
-            data_dict['summary'].append(summ)
-
-    return data_dict
-
-
-def build_balanced_train_data(**kwargs):
-    data_path = DATA_DIR / f'train_anonymized-WITH_POSTS.json'
-    assert data_path.exists()
-
-    with open(data_path) as f:
-        data = json.load(f)
-
-    data_dict = {'input': [], 'summary': []}
-    instr = 'Generate a summary of what triggered {} in this post: {}'
-    emo_cnt = dict.fromkeys(EMO_LIST, 0)
-    emo_list = set(EMO_LIST)
-
-    emo_freq = {
-        'anger': 470, 'disgust': 192, 'fear': 765, 'joy': 134,
-        'sadness': 360, 'trust': 99, 'anticipation': 873
-    }
-    max_size = min(emo_freq.values())
-
-    for sample in data.values():
-        annos = chain(*sample['Annotations'].values())
-        annos = list(filter(lambda a: a['Emotion'] in emo_list, annos))
-        anno = min(annos, key=lambda a: emo_freq[a['Emotion']], default=None)
-        if anno is not None:
-            emo = anno['Emotion']
-            data_dict['input'].append(instr.format(emo, sample['Reddit Post']))
-            data_dict['summary'].append(anno['Abstractive'])
-            emo_cnt[emo] += 1
-            if emo_cnt[emo] == max_size:
-                emo_list.remove(emo)
-
-    return data_dict
-
-
-def build_dataset(tokenizer, **dd_kwargs):
-    if dd_kwargs['data_split'] == 'train':
-        data_dict = build_balanced_train_data(**dd_kwargs)
+            sample = {'post': raw_sample['Reddit Post'], 'annos': []}
+            for emo, summ in emo2summ.items():
+                anno = {'emo': emo, 'summ': summ}
+                sample['annos'].append(anno)
+            raw_dataset.append(sample)
     else:
-        data_dict = build_data_dict(**dd_kwargs)
+        for raw_sample in json_data.values():
+            sample = {'post': raw_sample['Reddit Post'], 'annos': []}
+            for anno in chain(*raw_sample['Annotations'].values()):
+                if anno['Emotion'] != 'NA':
+                    emo_summ = {'emo': anno['Emotion'], 'summ': anno['Abstractive']}
+                    sample['annos'].append(emo_summ)
+            raw_dataset.append(sample)
 
-    raw_dataset = Dataset.from_dict(data_dict)
+    return raw_dataset
+
+
+def verify_raw_dataset(raw_ds):
+    assert type(raw_ds) == list
+    for sample in raw_ds:
+        assert (ks := list(sample.keys())) == ['post', 'annos'], f'Invalid key set {ks}'
+        assert len(sample['annos']) > 0, 'Empty emotion summary annotation'
+        for anno in sample['annos']:
+            assert (ks := list(anno.keys())) == ['emo', 'summ'], f'Invalid key set {ks}'
+
+
+def sample_all_summaries(raw_dataset):
+    verify_raw_dataset(raw_dataset)
+    data_dict = {'post': [], 'emo': [], 'summ': []}
+
+    for sample in raw_dataset:
+        for anno in sample['annos']:
+            data_dict['post'].append(sample['post'])
+            data_dict['emo'].append(anno['emo'])
+            data_dict['summ'].append(anno['summ'])
+
+    return data_dict
+
+
+def data_dict_allsumm(split, **kwargs):
+    raw_ds = get_raw_dataset(split, **kwargs)
+    sampled_raw_ds = sample_all_summaries(raw_ds)
+    return sampled_raw_ds
+
+
+def data_dict_balanced(split, sample_size=float('inf')):
+    raw_dataset = get_raw_dataset(split, concat_same_emo=True)
+    data_dict = {'post': [], 'emo': [], 'summ': []}
+
+    n_samples = dict.fromkeys(EMO_LIST, 0)
+    sampling_emos = set(EMO_LIST)
+    emo_freq = Counter(sample_all_summaries(raw_dataset)['emo'])
+    sample_size = min(min(emo_freq.values()), sample_size)
+
+    for sample in raw_dataset:
+        annos = list(filter(lambda es: es['emo'] in sampling_emos, sample['annos']))
+        if annos:
+            anno = min(annos, key=lambda anno: emo_freq[anno['emo']])
+            data_dict['post'].append(sample['post'])
+            data_dict['emo'].append(anno['emo'])
+            data_dict['summ'].append(anno['summ'])
+
+            emo = anno['emo']
+            n_samples[emo] += 1
+            if n_samples[emo] == sample_size:
+                sampling_emos.remove(emo)
+
+    return data_dict
+
+
+def verify_data_dict(dd):
+    key_set = ['post', 'emo', 'summ']
+    assert list(dd.keys()) == key_set, f'Invalid key set: {dd.keys()}'
+
+    len_dict = {k: len(dd[k]) for k in key_set}
+    assert len_dict['post'] == len_dict['emo'] == len_dict['summ'], f'{len_dict=}'
+
+
+def config_dataset(tokenizer):
+    instr = 'Generate a summary of what triggered {} in this post: {}'
+
+    def make_prompt(sample):
+        return {'prompt': instr.format(sample['emo'], sample['post'])}
 
     def tokenize(sample):
         inputs = tokenizer(
-            sample['input'],
+            sample['prompt'],
             max_length=512, truncation=True, padding='max_length'
         )
         labels = tokenizer(
-            sample['summary'], return_attention_mask=False,
+            sample['summ'], return_attention_mask=False,
             max_length=128, truncation=True, padding='max_length'
         )
         return {**inputs, 'labels': labels['input_ids']}
 
-    dataset = raw_dataset.map(tokenize, batched=True)
-    dataset = dataset.remove_columns(['input', 'summary'])
-    dataset.set_format('torch')
+    def make_dataset(data_dict):
+        verify_data_dict(data_dict)
+        dataset = Dataset.from_dict(data_dict)
+        dataset = dataset.map(make_prompt)
+        dataset = dataset.remove_columns(['post', 'emo'])
+        dataset = dataset.map(tokenize, batched=True)
+        dataset = dataset.remove_columns(['prompt', 'summ'])
+        dataset.set_format('torch')
+        return dataset
 
-    return dataset
+    return make_dataset
 
 
-def build_dataloader_fn(model, tokenizer):
+def config_dataloader(model, tokenizer, **kwargs):
     collator = DataCollatorForSeq2Seq(tokenizer, model, padding='longest')
-    dl_kwargs = dict(collate_fn=collator, batch_size=FLAGS.batch_size, num_workers=4)
 
-    def build_dataloader(**dd_kwargs):
-        dataset = build_dataset(tokenizer, **dd_kwargs)
-        dl = DataLoader(dataset, **dl_kwargs)
-        return dl
+    def seed_worker(worker_id):
+        worker_seed = torch.initial_seed() % 2**32
+        random.seed(worker_seed)
+        np.random.seed(worker_seed)
 
-    return build_dataloader
+    dl_kwargs = dict(
+        collate_fn=collator, batch_size=FLAGS.batch_size,
+        num_workers=len(sched_getaffinity(0)), worker_init_fn=seed_worker
+    )
+    dl_kwargs.update(kwargs)
+
+    make_dataloader = lambda dataset: DataLoader(dataset, **dl_kwargs)
+
+    return make_dataloader
+
+
+def set_deterministic(seed=3985):
+    rng = torch.Generator()
+    rng.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+
+    torch.use_deterministic_algorithms(True)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    return rng
+
+
+def unit_test(argv):
+    import os
+    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+
+    os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = 'true'
+    os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+
+    ckpt = 'facebook/bart-base'
+    model = AutoModelForSeq2SeqLM.from_pretrained(ckpt)
+    tokenizer = AutoTokenizer.from_pretrained(ckpt)
+
+    make_dataset = config_dataset(tokenizer)
+    make_dataloader = config_dataloader(model, tokenizer, batch_size=32)
+
+    data_dict = data_dict_balanced('train')
+    dataset = make_dataset(data_dict)
+    dataloader = make_dataloader(dataset)
+    sb = next(iter(dataloader))
+    print({k : v.shape for k, v in sb.items()})
 
 
 if __name__ == '__main__':
-    from transformers import AutoTokenizer
-    tokenizer = AutoTokenizer.from_pretrained('facebook/bart-base')
+    from absl import app
+    flags.DEFINE_integer('batch_size', 16, 'Batch size')
+    app.run(unit_test)
