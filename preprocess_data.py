@@ -69,17 +69,8 @@ def get_raw_dataset(split, concat_same_emo=True):
     return raw_dataset
 
 
-def verify_raw_dataset(raw_ds):
-    assert type(raw_ds) == list
-    for sample in raw_ds:
-        assert (ks := list(sample.keys())) == ['post', 'annos'], f'Invalid key set {ks}'
-        assert len(sample['annos']) > 0, 'Empty emotion summary annotation'
-        for anno in sample['annos']:
-            assert (ks := list(anno.keys())) == ['emo', 'summ'], f'Invalid key set {ks}'
-
-
-def sample_all_summaries(raw_dataset):
-    verify_raw_dataset(raw_dataset)
+def data_dict_allsumm(split, **kwargs):
+    raw_dataset = get_raw_dataset(split, **kwargs)
     data_dict = {'post': [], 'emo': [], 'summ': []}
 
     for sample in raw_dataset:
@@ -91,19 +82,13 @@ def sample_all_summaries(raw_dataset):
     return data_dict
 
 
-def data_dict_allsumm(split, **kwargs):
-    raw_ds = get_raw_dataset(split, **kwargs)
-    sampled_raw_ds = sample_all_summaries(raw_ds)
-    return sampled_raw_ds
-
-
 def data_dict_balanced(split, sample_size=float('inf')):
     raw_dataset = get_raw_dataset(split, concat_same_emo=True)
     data_dict = {'post': [], 'emo': [], 'summ': []}
 
     n_samples = dict.fromkeys(EMO_LIST, 0)
     sampling_emos = set(EMO_LIST)
-    emo_freq = Counter(sample_all_summaries(raw_dataset)['emo'])
+    emo_freq = Counter(data_dict_allsumm(split, concat_same_emo=True)['emo'])
     sample_size = min(min(emo_freq.values()), sample_size)
 
     for sample in raw_dataset:
@@ -122,16 +107,14 @@ def data_dict_balanced(split, sample_size=float('inf')):
     return data_dict
 
 
-def verify_data_dict(dd):
-    key_set = ['post', 'emo', 'summ']
-    assert list(dd.keys()) == key_set, f'Invalid key set: {dd.keys()}'
-
-    len_dict = {k: len(dd[k]) for k in key_set}
-    assert len_dict['post'] == len_dict['emo'] == len_dict['summ'], f'{len_dict=}'
-
-
 def config_dataset(tokenizer):
     instr = 'Generate a summary of what triggered {} in this post: {}'
+
+    def verify_data_dict(dd):
+        key_set = ['post', 'emo', 'summ']
+        assert list(dd.keys()) == key_set, f'Invalid key set: {dd.keys()}'
+        len_dict = {k: len(dd[k]) for k in key_set}
+        assert len_dict['post'] == len_dict['emo'] == len_dict['summ'], f'{len_dict=}'
 
     def make_prompt(sample):
         return {'prompt': instr.format(sample['emo'], sample['post'])}
