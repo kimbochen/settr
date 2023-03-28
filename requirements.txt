@@ -8,5 +8,4 @@ evaluate
 absl-py
 rouge-score
 tensorboard
-tensorboardX
 matplotlib

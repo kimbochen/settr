@@ -1,54 +1,97 @@
 import torch
 import evaluate as ev
-from absl import app, flags
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+import numpy as np
+from absl import flags
 from tqdm.auto import tqdm
 
-from data_preprocess import build_dataset, build_dataloader_fn, EMO_LIST
+from preprocess_data import EMO_LIST
+
+FLAGS = flags.FLAGS
 
 
-def main(argv):
-    tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt)
-    model = AutoModelForSeq2SeqLM.from_pretrained(FLAGS.ckpt).to('cuda')
+@torch.inference_mode()
+def evaluate(model, tokenizer, eval_dls, compute_loss=False):
+    rouge_l = dict()
+    accum_loss = 0
 
-    def build_emo_dl_fn():
-        build_dataloader = build_dataloader_fn(model, tokenizer)
-        def build_emo_dl(emo):
-            filter_fn = lambda e: e == emo
-            dl = build_dataloader(data_split=FLAGS.split, is_tgt_emo=filter_fn)
-            return dl
-        return build_emo_dl
-
-    @torch.inference_mode()
-    def evaluate(dataloader, emo_name):
+    for emo in tqdm(EMO_LIST):
         rouge = ev.load('rouge')
-        model.eval()
-        for batch in tqdm(dataloader):
+
+        for batch in eval_dls[emo]:
             batch = {k : v.to('cuda') for k, v in batch.items()}
+
             summary_ids = model.generate(batch['input_ids'], length_penalty=0.8, num_beams=8, max_length=128)
             preds = tokenizer.batch_decode(summary_ids, skip_special_tokens=True)
             refs = tokenizer.batch_decode(batch['labels'], skip_special_tokens=True)
             rouge.add_batch(predictions=preds, references=refs)
-        metrics = rouge.compute()
-        print(f'{emo_name}: rougeL={metrics["rougeL"]:.3f}\n\n')
 
-    build_emo_dl = build_emo_dl_fn()
+            if compute_loss:
+                loss, *_ = model(**batch, return_dict=False)
+                accum_loss += loss.detach().item()
+
+        rouge_l[emo] = np.around(rouge.compute(rouge_types=['rougeL'])['rougeL'], 4)
+
+    avg_rouge = np.mean([*rouge_l.values()])
+
+    if compute_loss:
+        n_steps = len(eval_dls[EMO_LIST[0]]) * len(EMO_LIST)
+        avg_loss = accum_loss / n_steps
+        return rouge_l, avg_rouge, avg_loss
+
+    return rouge_l, avg_rouge
+
+
+def make_eval_dataloaders(split, dd2dl):
+    data_dict = data_dict_balanced(split, FLAGS.seed, sample_size=FLAGS.batch_size)
+    data_dict_size = len(data_dict['emo'])
+    eval_dls = dict()
 
     for emo in EMO_LIST:
-        print(f'Evaluating on emotion {emo}')
-        emo_dl = build_emo_dl(emo)
-        evaluate(emo_dl, emo)
+        emo_dd = {'post': [], 'emo': [], 'summ': []}
+        for i in range(data_dict_size):
+            if data_dict['emo'][i] == emo:
+                emo_dd['post'].append(data_dict['post'][i])
+                emo_dd['emo'].append(emo)
+                emo_dd['summ'].append(data_dict['summ'][i])
+        eval_dls[emo] = dd2dl(emo_dd)
+
+    return eval_dls
+
+
+def main(argv):
+    rng = set_randomness(FLAGS.seed)
+    model = AutoModelForSeq2SeqLM.from_pretrained(FLAGS.ckpt).to('cuda')
+    if FLAGS.ckpt.startswith('t5'):
+        tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt, model_max_length=512)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt)
+
+    make_dataset = config_dataset(tokenizer)
+    make_dataloader = config_dataloader(model, tokenizer, rng)
+    dd2dl = lambda dd: make_dataloader(make_dataset(dd))
+    eval_dls = make_eval_dataloaders(FLAGS.split, dd2dl)
+
+    rouge, avg_rouge = evaluate(model, tokenizer, eval_dls)
+    print(f'ROUGE-L={rouge}, {avg_rouge=:.4f}')
 
 
 if __name__ == '__main__':
     import os
+    from absl import app
+    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+
+    from preprocess_data import (
+        set_randomness, data_dict_balanced,
+        config_dataset, config_dataloader
+    )
 
     os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = 'true'
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
     FLAGS = flags.FLAGS
-    flags.DEFINE_integer('batch_size', 32, 'Batch size')
-    flags.DEFINE_string('ckpt', 'facebook/bart-base', 'Checkpoint name')
-    flags.DEFINE_string('split', 'val', 'Data split')
+    flags.DEFINE_integer('seed', None, 'Random seed', required=True)
+    flags.DEFINE_integer('batch_size', None, 'Batch size', required=True)
+    flags.DEFINE_string('ckpt', None, 'Checkpoint name', required=True)
+    flags.DEFINE_string('split', None, 'Data split', required=True)
 
     app.run(main)
