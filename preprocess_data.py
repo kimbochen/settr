@@ -73,8 +73,8 @@ def get_raw_dataset(split, seed, concat_same_emo=True):
     return raw_dataset
 
 
-def data_dict_allsumm(*args, **kwargs):
-    raw_dataset = get_raw_dataset(*args, **kwargs)
+def data_dict_allsumm(split, **kwargs):
+    raw_dataset = get_raw_dataset(split, FLAGS.seed, **kwargs)
     data_dict = {'post': [], 'emo': [], 'summ': []}
 
     for sample in raw_dataset:
@@ -86,14 +86,15 @@ def data_dict_allsumm(*args, **kwargs):
     return data_dict
 
 
-def data_dict_balanced(*args, sample_size=float('inf')):
-    raw_dataset = get_raw_dataset(*args, concat_same_emo=True)
+def data_dict_balanced(split, sample_size=None):
+    raw_dataset = get_raw_dataset(split, FLAGS.seed, concat_same_emo=True)
     data_dict = {'post': [], 'emo': [], 'summ': []}
 
     n_samples = dict.fromkeys(EMO_LIST, 0)
     sampling_emos = set(EMO_LIST)
-    emo_freq = Counter(data_dict_allsumm(*args, concat_same_emo=True)['emo'])
-    sample_size = min(min(emo_freq.values()), sample_size)
+    emo_freq = Counter(data_dict_allsumm(split, concat_same_emo=True)['emo'])
+    if sample_size is None:
+        sample_size = min(emo_freq.values())
 
     for sample in raw_dataset:
         annos = list(filter(lambda es: es['emo'] in sampling_emos, sample['annos']))
@@ -195,7 +196,7 @@ def unit_test(argv):
     make_dataset = config_dataset(tokenizer)
     make_dataloader = config_dataloader(model, tokenizer, rng, batch_size=32)
 
-    data_dict = data_dict_balanced('train', FLAGS.seed)
+    data_dict = data_dict_balanced('train')
     dataset = make_dataset(data_dict)
     dataloader = make_dataloader(dataset)
     sb = next(iter(dataloader))
