@@ -29,8 +29,12 @@ def main(argv):
     make_dataloader = config_dataloader(model, tokenizer, rng)
     dd2dl = lambda dd: make_dataloader(make_dataset(dd))
     train_dl = dd2dl(select_train_data_dict(FLAGS.dd))
-    eval_train_dls = make_eval_dataloaders('train', dd2dl)
-    eval_val_dls = make_eval_dataloaders('val', dd2dl)
+
+    eval_train_dd = data_dict_balanced('train', sample_size=FLAGS.batch_size)
+    eval_train_dls = make_eval_dataloaders(eval_train_dd, dd2dl)
+
+    eval_val_dd = data_dict_balanced('val', sample_size=FLAGS.batch_size)
+    eval_val_dls = make_eval_dataloaders(eval_val_dd, dd2dl)
 
     optimizer = AdamW(model.parameters(), lr=FLAGS.lr)
     if FLAGS.warmup is not None:
@@ -93,11 +97,11 @@ def main(argv):
 
 def select_train_data_dict(name):
     if name == 'balanced':
-        return data_dict_balanced('train', FLAGS.seed)
+        return data_dict_balanced('train')
     elif name == 'allsumm':
-        return data_dict_allsumm('train', FLAGS.seed, concat_same_emo=False)
+        return data_dict_allsumm('train', concat_same_emo=False)
     elif name == 'allsumm_concat':
-        return data_dict_allsumm('train', FLAGS.seed, concat_same_emo=True)
+        return data_dict_allsumm('train', concat_same_emo=True)
     else:
         raise ValueError(f'Invalid data dict enum {name}.')
 

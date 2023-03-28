@@ -4,7 +4,7 @@ import numpy as np
 from absl import flags
 from tqdm.auto import tqdm
 
-from preprocess_data import EMO_LIST, data_dict_balanced
+from preprocess_data import EMO_LIST, data_dict_allsumm
 
 FLAGS = flags.FLAGS
 
@@ -41,14 +41,13 @@ def evaluate(model, tokenizer, eval_dls, compute_loss=False):
     return rouge_l, avg_rouge
 
 
-def make_eval_dataloaders(split, dd2dl):
-    data_dict = data_dict_balanced(split, FLAGS.seed, sample_size=FLAGS.batch_size)
-    data_dict_size = len(data_dict['emo'])
+def make_eval_dataloaders(data_dict, dd2dl):
+    n_samples = len(data_dict['emo'])
     eval_dls = dict()
 
     for emo in EMO_LIST:
         emo_dd = {'post': [], 'emo': [], 'summ': []}
-        for i in range(data_dict_size):
+        for i in range(n_samples):
             if data_dict['emo'][i] == emo:
                 emo_dd['post'].append(data_dict['post'][i])
                 emo_dd['emo'].append(emo)
@@ -69,7 +68,9 @@ def main(argv):
     make_dataset = config_dataset(tokenizer)
     make_dataloader = config_dataloader(model, tokenizer, rng)
     dd2dl = lambda dd: make_dataloader(make_dataset(dd))
-    eval_dls = make_eval_dataloaders(FLAGS.split, dd2dl)
+
+    data_dict = data_dict_allsumm(FLAGS.split, concat_same_emo=True)
+    eval_dls = make_eval_dataloaders(data_dict, dd2dl)
 
     rouge, avg_rouge = evaluate(model, tokenizer, eval_dls)
     print(f'ROUGE-L={rouge}, {avg_rouge=:.4f}')
