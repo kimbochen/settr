@@ -1,39 +1,59 @@
-from functools import partial
+from pathlib import Path
 
-import torch
-import evaluate as ev
-from absl import app, flags
-from tensorboardX import SummaryWriter
+from absl import flags
 from torch.optim import AdamW
+from torch.utils.tensorboard import SummaryWriter
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from transformers import get_constant_schedule, get_constant_schedule_with_warmup
 from tqdm.auto import tqdm
 
-from data_preprocess import build_dataloader_fn
+from eval_model import evaluate, make_eval_dataloaders
+from preprocess_data import (
+    EMO_LIST, set_randomness,
+    data_dict_allsumm, data_dict_balanced,
+    config_dataset, config_dataloader
+)
+
+FLAGS = flags.FLAGS
 
 
 def main(argv):
-    tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt)  # Add model_max_length=512 for T5
+    rng = set_randomness(FLAGS.seed)
     model = AutoModelForSeq2SeqLM.from_pretrained(FLAGS.ckpt).to('cuda')
-    optimizer = AdamW(model.parameters(), lr=FLAGS.lr)
-    scheduler = get_constant_schedule_with_warmup(optimizer, FLAGS.warmup)  # get_constant_schedule(optimizer)
-    writer = SummaryWriter(FLAGS.save_dir)
-    evaluate = partial(evaluate_fn, model=model, tokenizer=tokenizer, writer=writer)
+    if FLAGS.ckpt.startswith('t5'):
+        tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt, model_max_length=512)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt)
 
-    build_dataloader = build_dataloader_fn(model, tokenizer)
-    train_dl = build_dataloader(data_split='train')
-    eval_train_dl = build_dataloader(data_split='train', is_tgt_emo=lambda e: e == FLAGS.emo)
-    eval_val_dl = build_dataloader(data_split='val', is_tgt_emo=lambda e: e == FLAGS.emo)
+    make_dataset = config_dataset(tokenizer)
+    make_dataloader = config_dataloader(model, tokenizer, rng)
+    dd2dl = lambda dd: make_dataloader(make_dataset(dd))
+    train_dl = dd2dl(select_train_data_dict(FLAGS.dd))
+    eval_train_dls = make_eval_dataloaders('train', dd2dl)
+    eval_val_dls = make_eval_dataloaders('val', dd2dl)
+
+    optimizer = AdamW(model.parameters(), lr=FLAGS.lr)
+    if FLAGS.warmup is not None:
+        scheduler = get_constant_schedule_with_warmup(optimizer, FLAGS.warmup)
+    else:
+        scheduler = get_constant_schedule(optimizer)
+
+    save_dir = Path('new_runs') / FLAGS.exp_name
+    assert not save_dir.exists(), f'{save_dir} already exist.'
+    writer = SummaryWriter(save_dir)
 
     model.train()
     optimizer.zero_grad()
-    pbar = tqdm(total=FLAGS.n_steps)
-    best_metric = float('-inf')
+    pbar = tqdm(total=FLAGS.train_steps)
+    forward_steps = FLAGS.train_steps * FLAGS.grad_acc
+    best_rouge = float('-inf')
+    accum_loss = 0
 
-    for step, batch in enum_steps(train_dl, total_steps=FLAGS.n_steps*FLAGS.grad_acc):
+    for step, batch in zip(range(forward_steps), load_batch(train_dl)):
         loss, *_ = model(**batch, return_dict=False)
         loss /= FLAGS.grad_acc
         loss.backward()
+        accum_loss += loss.detach().item()
 
         if (step + 1) % FLAGS.grad_acc == 0:
             optimizer.step()
@@ -45,81 +65,70 @@ def main(argv):
             opt_step = (step + 1) // FLAGS.grad_acc
 
             writer.add_scalar('learning_rate', scheduler.get_last_lr()[0], opt_step)
-            model.eval()
-            evaluate('train', eval_train_dl, opt_step)
-            metric = evaluate('val', eval_val_dl, opt_step)
-            model.train()
+            writer.add_scalar('train/loss', accum_loss/FLAGS.eval_freq, opt_step)
+            accum_loss = 0
 
-            if metric > best_metric:
-                print(f'Saving best model with validation rougeL {metric:.3f}...')
-                model.save_pretrained(writer.logdir, from_pt=True)
-                best_metric = metric
+            rouge_train, _ = evaluate(model, tokenizer, eval_train_dls)
+            print(f'Step {opt_step}: {rouge_train=}')
+
+            rouge_val, rouge_avg, val_loss = evaluate(model, tokenizer, eval_val_dls, compute_loss=True)
+            writer.add_scalar('val/loss', val_loss, opt_step)
+            print(f'Step {opt_step}: {rouge_val=}')
+
+            for emo in EMO_LIST:
+                writer.add_scalar(f'train/ROUGE-L/{emo}', rouge_train[emo], opt_step)
+                writer.add_scalar(f'val/ROUGE-L/{emo}', rouge_val[emo], opt_step)
+
+            if rouge_avg > best_rouge:
+                best_rouge = rouge_avg
+                print(f'Saving best model with validation ROUGE-L {best_rouge:.3f}...')
+                model.save_pretrained(save_dir, from_pt=True)
 
     pbar.close()
-    tokenizer.save_pretrained(writer.logdir, from_pt=True)
+    writer.close()
+    tokenizer.save_pretrained(save_dir, from_pt=True)
 
 
-@torch.inference_mode()
-def evaluate_fn(split, dataloader, step, model, tokenizer, writer):
-    rouge = ev.load('rouge')
-    losses = []
-
-    for _, batch in tqdm(enum_steps(dataloader, total_steps=5), total=5):
-        loss, *_ = model(**batch, return_dict=False)
-        losses.append(loss)
-
-        summary_ids = model.generate(batch['input_ids'], length_penalty=0.8, num_beams=8, max_length=128)
-        preds = tokenizer.batch_decode(summary_ids, skip_special_tokens=True)
-        refs = tokenizer.batch_decode(batch['labels'], skip_special_tokens=True)
-        rouge.add_batch(predictions=preds, references=refs)
-
-    metrics = rouge.compute()
-    avg_loss = torch.mean(torch.stack(losses)).item()
-    print(f'{split}: {avg_loss=:3f}, rougeL={metrics["rougeL"]:.3f}')
-    
-    writer.add_scalar(f'{split}/loss', avg_loss, step)
-    for name, val in metrics.items():
-        writer.add_scalar(f'{split}/metric/{name}', val, step)
-
-    return metrics['rougeL']
+def select_train_data_dict(name):
+    if name == 'balanced':
+        return data_dict_balanced('train', FLAGS.seed)
+    elif name == 'allsumm':
+        return data_dict_allsumm('train', FLAGS.seed, concat_same_emo=False)
+    elif name == 'allsumm_concat':
+        return data_dict_allsumm('train', FLAGS.seed, concat_same_emo=True)
+    else:
+        raise ValueError(f'Invalid data dict enum {name}.')
 
 
-def enum_steps(dataloader, total_steps):
-    step = 0
+def load_batch(dataloader):
     while True:
         for batch in dataloader:
-            if step == total_steps:
-                return
             batch = {k : v.to('cuda') for k, v in batch.items()}
-            step += 1
-            yield step, batch
+            yield batch
 
 
 if __name__ == '__main__':
     import os
+    from absl import app
 
     os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = 'true'
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
+    flags.DEFINE_integer('seed', None, 'Random seed', required=True)
+    flags.DEFINE_string('ckpt', None, 'Checkpoint name', required=True)
+    flags.DEFINE_string('exp_name', None, 'Experiment name', required=True)
 
-    FLAGS = flags.FLAGS
+    flags.DEFINE_enum(
+        'dd', None, ['balanced', 'allsumm', 'allsumm_concat'],
+        'Data dictionary configuration', required=True
+    )
+    flags.DEFINE_integer('eval_freq', None, 'Number of steps between each evaluation', required=True)
 
-    flags.DEFINE_string('ckpt', 'facebook/bart-base', 'Checkpoint name')
-    flags.DEFINE_string('save_dir', None, 'Checkpoint name')
+    flags.DEFINE_integer('train_steps', None, 'Number of training steps', required=True)
+    flags.DEFINE_float('lr', None, 'Learning rate', required=True)
+    flags.DEFINE_integer('warmup', None, 'Number of warm-up steps')
 
-    flags.DEFINE_float('lr', 5e-5, 'Learning rate')
-    flags.DEFINE_integer('warmup', None, 'Number of steps')
-
-    flags.DEFINE_integer('batch_size', 16, 'Batch size')
-    flags.DEFINE_integer('grad_acc', 1, 'Gradient accumulation steps')
-    flags.DEFINE_integer('n_steps', None, 'Number of steps')
-    flags.DEFINE_integer('eval_freq', None, 'Number of steps per evaluation')
-
-    flags.DEFINE_string('emo', 'anger', 'Emotion of evaluation datasets')
-
-    flags.mark_flag_as_required('warmup')
-    flags.mark_flag_as_required('n_steps')
-    flags.mark_flag_as_required('eval_freq')
-    flags.mark_flag_as_required('save_dir')
+    flags.DEFINE_integer('batch_size', None, 'Batch size', required=True)
+    flags.DEFINE_integer('grad_acc', 1, 'Number of gradient accumulation steps')
 
     app.run(main)
