@@ -4,7 +4,7 @@ import numpy as np
 from absl import flags
 from tqdm.auto import tqdm
 
-from preprocess_data import EMO_LIST
+from preprocess_data import EMO_LIST, data_dict_balanced
 
 FLAGS = flags.FLAGS
 

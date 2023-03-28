@@ -68,20 +68,22 @@ def main(argv):
             writer.add_scalar('train/loss', accum_loss/FLAGS.eval_freq, opt_step)
             accum_loss = 0
 
-            rouge_train, _ = evaluate(model, tokenizer, eval_train_dls)
-            print(f'Step {opt_step}: {rouge_train=}')
+            rouge_train, rouge_train_avg = evaluate(model, tokenizer, eval_train_dls)
+            print(f'Step {opt_step}: {rouge_train=}, {rouge_train_avg=:4f}')
+            writer.add_scalar('train/ROUGE-L/avg', rouge_train_avg, opt_step)
 
-            rouge_val, rouge_avg, val_loss = evaluate(model, tokenizer, eval_val_dls, compute_loss=True)
+            rouge_val, rouge_val_avg, val_loss = evaluate(model, tokenizer, eval_val_dls, compute_loss=True)
+            print(f'Step {opt_step}: {rouge_val=}, {rouge_val_avg=:4f}')
+            writer.add_scalar('val/ROUGE-L/avg', rouge_val_avg, opt_step)
             writer.add_scalar('val/loss', val_loss, opt_step)
-            print(f'Step {opt_step}: {rouge_val=}')
 
             for emo in EMO_LIST:
                 writer.add_scalar(f'train/ROUGE-L/{emo}', rouge_train[emo], opt_step)
                 writer.add_scalar(f'val/ROUGE-L/{emo}', rouge_val[emo], opt_step)
 
-            if rouge_avg > best_rouge:
-                best_rouge = rouge_avg
-                print(f'Saving best model with validation ROUGE-L {best_rouge:.3f}...')
+            if rouge_val_avg > best_rouge:
+                best_rouge = rouge_val_avg
+                print(f'Saving best model with validation ROUGE-L {best_rouge:.4f}...')
                 model.save_pretrained(save_dir, from_pt=True)
 
     pbar.close()
