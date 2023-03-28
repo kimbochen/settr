@@ -1,5 +1,6 @@
 # get_raw_dataset
 import json
+import random
 from collections import defaultdict
 from itertools import chain
 from pathlib import Path
@@ -17,7 +18,7 @@ from absl import flags
 from torch.utils.data import DataLoader
 from transformers import DataCollatorForSeq2Seq
 
-# set_deterministic
+# set_randomness
 import random
 import torch
 import numpy as np
@@ -27,7 +28,7 @@ EMO_LIST = ['anger', 'disgust', 'fear', 'joy', 'sadness', 'trust', 'anticipation
 FLAGS = flags.FLAGS  # config_dataloader
 
 
-def get_raw_dataset(split, concat_same_emo=True):
+def get_raw_dataset(split, seed, concat_same_emo=True):
     '''
     Raw dataset format:
     raw_dataset: [sample]
@@ -66,11 +67,14 @@ def get_raw_dataset(split, concat_same_emo=True):
                     sample['annos'].append(emo_summ)
             raw_dataset.append(sample)
 
+    random.seed(seed)
+    random.shuffle(raw_dataset)
+
     return raw_dataset
 
 
-def data_dict_allsumm(split, **kwargs):
-    raw_dataset = get_raw_dataset(split, **kwargs)
+def data_dict_allsumm(*args, **kwargs):
+    raw_dataset = get_raw_dataset(*args, **kwargs)
     data_dict = {'post': [], 'emo': [], 'summ': []}
 
     for sample in raw_dataset:
@@ -82,13 +86,13 @@ def data_dict_allsumm(split, **kwargs):
     return data_dict
 
 
-def data_dict_balanced(split, sample_size=float('inf')):
-    raw_dataset = get_raw_dataset(split, concat_same_emo=True)
+def data_dict_balanced(*args, sample_size=float('inf')):
+    raw_dataset = get_raw_dataset(*args, concat_same_emo=True)
     data_dict = {'post': [], 'emo': [], 'summ': []}
 
     n_samples = dict.fromkeys(EMO_LIST, 0)
     sampling_emos = set(EMO_LIST)
-    emo_freq = Counter(data_dict_allsumm(split, concat_same_emo=True)['emo'])
+    emo_freq = Counter(data_dict_allsumm(*args, concat_same_emo=True)['emo'])
     sample_size = min(min(emo_freq.values()), sample_size)
 
     for sample in raw_dataset:
@@ -143,7 +147,7 @@ def config_dataset(tokenizer):
     return make_dataset
 
 
-def config_dataloader(model, tokenizer, **kwargs):
+def config_dataloader(model, tokenizer, rng, **kwargs):
     collator = DataCollatorForSeq2Seq(tokenizer, model, padding='longest')
 
     def seed_worker(worker_id):
@@ -153,7 +157,8 @@ def config_dataloader(model, tokenizer, **kwargs):
 
     dl_kwargs = dict(
         collate_fn=collator, batch_size=FLAGS.batch_size,
-        num_workers=len(sched_getaffinity(0)), worker_init_fn=seed_worker
+        num_workers=len(sched_getaffinity(0)),
+        worker_init_fn=seed_worker, generator=rng
     )
     dl_kwargs.update(kwargs)
 
@@ -162,13 +167,12 @@ def config_dataloader(model, tokenizer, **kwargs):
     return make_dataloader
 
 
-def set_deterministic(seed=3985):
+def set_randomness(seed):
     rng = torch.Generator()
     rng.manual_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
 
-    torch.use_deterministic_algorithms(True)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
@@ -182,14 +186,16 @@ def unit_test(argv):
     os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = 'true'
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
+    rng = set_randomness(FLAGS.seed)
+
     ckpt = 'facebook/bart-base'
     model = AutoModelForSeq2SeqLM.from_pretrained(ckpt)
     tokenizer = AutoTokenizer.from_pretrained(ckpt)
 
     make_dataset = config_dataset(tokenizer)
-    make_dataloader = config_dataloader(model, tokenizer, batch_size=32)
+    make_dataloader = config_dataloader(model, tokenizer, rng, batch_size=32)
 
-    data_dict = data_dict_balanced('train')
+    data_dict = data_dict_balanced('train', FLAGS.seed)
     dataset = make_dataset(data_dict)
     dataloader = make_dataloader(dataset)
     sb = next(iter(dataloader))
@@ -198,5 +204,6 @@ def unit_test(argv):
 
 if __name__ == '__main__':
     from absl import app
+    flags.DEFINE_integer('seed', 3985, 'Batch size')
     flags.DEFINE_integer('batch_size', 16, 'Batch size')
     app.run(unit_test)
