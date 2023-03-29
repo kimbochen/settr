@@ -9,10 +9,10 @@ from tqdm.auto import tqdm
 
 from eval_model import evaluate, make_eval_dataloaders
 from preprocess_data import (
-    EMO_LIST, set_randomness,
-    data_dict_allsumm, data_dict_balanced,
+    EMO_LIST, data_dict_allsumm, data_dict_balanced,
     config_dataset, config_dataloader
 )
+from utils import set_randomness, config_log_print
 
 FLAGS = flags.FLAGS
 
@@ -24,6 +24,12 @@ def main(argv):
         tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt, model_max_length=512)
     else:
         tokenizer = AutoTokenizer.from_pretrained(FLAGS.ckpt)
+    optimizer = AdamW(model.parameters(), lr=FLAGS.lr)
+    if FLAGS.warmup is not None:
+        scheduler = get_constant_schedule_with_warmup(optimizer, FLAGS.warmup)
+    else:
+        scheduler = get_constant_schedule(optimizer)
+
 
     make_dataset = config_dataset(tokenizer)
     make_dataloader = config_dataloader(model, tokenizer, rng)
@@ -36,15 +42,12 @@ def main(argv):
     eval_val_dd = data_dict_balanced('val', sample_size=FLAGS.batch_size)
     eval_val_dls = make_eval_dataloaders(eval_val_dd, dd2dl)
 
-    optimizer = AdamW(model.parameters(), lr=FLAGS.lr)
-    if FLAGS.warmup is not None:
-        scheduler = get_constant_schedule_with_warmup(optimizer, FLAGS.warmup)
-    else:
-        scheduler = get_constant_schedule(optimizer)
 
     save_dir = Path('new_runs') / FLAGS.exp_name
     assert not save_dir.exists(), f'{save_dir} already exist.'
     writer = SummaryWriter(save_dir)
+    log_print = config_log_print(f'{save_dir}/train.log')
+
 
     model.train()
     optimizer.zero_grad()
@@ -73,11 +76,11 @@ def main(argv):
             accum_loss = 0
 
             rouge_train, rouge_train_avg = evaluate(model, tokenizer, eval_train_dls)
-            print(f'Step {opt_step}: {rouge_train=}, {rouge_train_avg=:4f}')
+            log_print(f'Step {opt_step}: {rouge_train=}, {rouge_train_avg=:4f}')
             writer.add_scalar('train/ROUGE-L/avg', rouge_train_avg, opt_step)
 
             rouge_val, rouge_val_avg, val_loss = evaluate(model, tokenizer, eval_val_dls, compute_loss=True)
-            print(f'Step {opt_step}: {rouge_val=}, {rouge_val_avg=:4f}')
+            log_print(f'Step {opt_step}: {rouge_val=}, {rouge_val_avg=:4f}')
             writer.add_scalar('val/ROUGE-L/avg', rouge_val_avg, opt_step)
             writer.add_scalar('val/loss', val_loss, opt_step)
 
@@ -87,7 +90,7 @@ def main(argv):
 
             if rouge_val_avg > best_rouge:
                 best_rouge = rouge_val_avg
-                print(f'Saving best model with validation ROUGE-L {best_rouge:.4f}...')
+                log_print(f'Saving best model with validation ROUGE-L {best_rouge:.4f}...')
                 model.save_pretrained(save_dir, from_pt=True)
 
     pbar.close()

@@ -4,7 +4,7 @@ import numpy as np
 from absl import flags
 from tqdm.auto import tqdm
 
-from preprocess_data import EMO_LIST, data_dict_allsumm
+from preprocess_data import EMO_LIST
 
 FLAGS = flags.FLAGS
 
@@ -68,12 +68,12 @@ def main(argv):
     make_dataset = config_dataset(tokenizer)
     make_dataloader = config_dataloader(model, tokenizer, rng)
     dd2dl = lambda dd: make_dataloader(make_dataset(dd))
-
     data_dict = data_dict_allsumm(FLAGS.split, concat_same_emo=True)
     eval_dls = make_eval_dataloaders(data_dict, dd2dl)
 
+    log_print = config_log_print(f'{FLAGS.ckpt}/{FLAGS.split}.log')
     rouge, avg_rouge = evaluate(model, tokenizer, eval_dls)
-    print(f'ROUGE-L={rouge}, {avg_rouge=:.4f}')
+    log_print(f'ROUGE-L={rouge}, {avg_rouge=:.4f}')
 
 
 if __name__ == '__main__':
@@ -82,9 +82,9 @@ if __name__ == '__main__':
     from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
     from preprocess_data import (
-        set_randomness, data_dict_balanced,
-        config_dataset, config_dataloader
+        data_dict_allsumm, config_dataset, config_dataloader
     )
+    from utils import set_randomness, config_log_print
 
     os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = 'true'
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
