@@ -12,16 +12,13 @@ from collections import Counter, defaultdict
 from datasets import Dataset
 
 # config_dataloader
+import random
 from os import sched_getaffinity
 import torch
+import numpy as np
 from absl import flags
 from torch.utils.data import DataLoader
 from transformers import DataCollatorForSeq2Seq
-
-# set_randomness
-import random
-import torch
-import numpy as np
 
 # data_dict_balanced
 EMO_LIST = ['anger', 'disgust', 'fear', 'joy', 'sadness', 'trust', 'anticipation']
@@ -168,21 +165,10 @@ def config_dataloader(model, tokenizer, rng, **kwargs):
     return make_dataloader
 
 
-def set_randomness(seed):
-    rng = torch.Generator()
-    rng.manual_seed(seed)
-    random.seed(seed)
-    np.random.seed(seed)
-
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-    return rng
-
-
 def unit_test(argv):
     import os
     from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+    from utils import set_randomness
 
     os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = 'true'
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
