@@ -27,19 +27,37 @@ set -o xtrace
 randomSeeds=(39 85 99 42 27)
 
 # How does balancing dataset affect performance
+# for i in {0..4}
+# do
+#     python train_model.py \
+#         --ckpt "facebook/bart-base" --exp_name "allsumm_${i}" \
+#         --seed ${randomSeeds[i]} --dd "allsumm_concat" \
+#         --train_steps 1200 --lr "2e-5" --warmup 400 \
+#         --batch_size 16 --grad_acc 2 \
+#         --eval_freq 60 
+# 
+#     python train_model.py \
+#         --ckpt "facebook/bart-base" --exp_name "balanced_${i}" \
+#         --seed ${randomSeeds[i]} --dd "balanced" \
+#         --train_steps 1200 --lr "2e-5" --warmup 400 \
+#         --batch_size 16 --grad_acc 2 \
+#         --eval_freq 60 
+# done
+
+# Trying out different models
 for i in {0..4}
 do
     python train_model.py \
-        --ckpt "facebook/bart-base" --exp_name "allsumm_${i}" \
+        --ckpt "t5-base" --exp_name "allsumm_${i}_t5" \
         --seed ${randomSeeds[i]} --dd "allsumm_concat" \
         --train_steps 1200 --lr "2e-5" --warmup 400 \
-        --batch_size 16 --grad_acc 2 \
+        --batch_size 8 --grad_acc 4 \
         --eval_freq 60 
 
     python train_model.py \
-        --ckpt "facebook/bart-base" --exp_name "balanced_${i}" \
+        --ckpt "t5-base" --exp_name "balanced_${i}_t5" \
         --seed ${randomSeeds[i]} --dd "balanced" \
         --train_steps 1200 --lr "2e-5" --warmup 400 \
-        --batch_size 16 --grad_acc 2 \
+        --batch_size 8 --grad_acc 4 \
         --eval_freq 60 
 done
