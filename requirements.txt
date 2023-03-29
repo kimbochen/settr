@@ -9,3 +9,4 @@ absl-py
 rouge-score
 tensorboard
 matplotlib
+huggingface_hub
